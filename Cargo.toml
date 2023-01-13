@@ -1,0 +1,11 @@
+[package]
+name = "caesars-palace-nes"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arrayvec = "0.7.2"
+
+[dev-dependencies]
+clap = { version = "4.0.32", features = ["derive"] }
+parse_int = "0.6.0"
