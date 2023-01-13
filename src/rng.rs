@@ -59,26 +59,79 @@ impl Rng {
     }
 
     pub fn gen(&mut self) -> u8 {
-        let y = usize::from(if self.index >= TABLE_LEN as u8 {
-            self.index - TABLE_LEN as u8
-        } else {
-            self.index
-        });
+        let r = self.gen_helper(self.index);
 
-        let x = usize::from(if self.index >= 147 {
-            self.index - 147
-        } else {
-            self.index + 103
-        });
+        self.index = Self::index_next(self.index);
+
+        r
+    }
+
+    pub fn undo(&mut self, index_start: u8, len: usize) {
+        let mut index = index_start;
+
+        for _ in 0..len {
+            self.gen_helper(index);
+            index = Self::index_next(index);
+        }
+
+        self.index = index_start;
+    }
+
+    fn gen_helper(&mut self, index: u8) -> u8 {
+        let y = Self::f_y(index);
+        let x = Self::f_x(index);
 
         let r = self.table[y] ^ self.table[x];
         self.table[x] = r;
 
-        self.index = self.index.wrapping_add(1);
-        if self.index >= TABLE_LEN as u8 {
-            self.index = 0;
-        }
-
         r
+    }
+
+    fn f_y(index: u8) -> usize {
+        usize::from(if index >= TABLE_LEN as u8 {
+            index - TABLE_LEN as u8
+        } else {
+            index
+        })
+    }
+
+    fn f_x(index: u8) -> usize {
+        usize::from(if index >= 147 {
+            index - 147
+        } else {
+            index + 103
+        })
+    }
+
+    fn index_next(index: u8) -> u8 {
+        let nxt = index.wrapping_add(1);
+
+        if nxt >= TABLE_LEN as u8 {
+            0
+        } else {
+            nxt
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_undo() {
+        const LEN: usize = 5;
+
+        for index_start in 0..=0xFF {
+            let rng_orig = Rng::with_index(index_start);
+
+            let mut rng = rng_orig.clone();
+            for _ in 0..LEN {
+                rng.gen();
+            }
+            rng.undo(index_start, LEN);
+
+            assert_eq!(rng, rng_orig);
+        }
     }
 }
