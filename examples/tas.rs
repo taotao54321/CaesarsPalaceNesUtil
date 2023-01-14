@@ -143,6 +143,7 @@ impl State {
 
         debug_assert!(self.money >= BET_UNIT * bet_count_max.get() as u32);
 
+        let rng_index_before = self.rng.index();
         self.rng.set_index(rng_index);
 
         let rs = rand_4(&mut self.rng);
@@ -166,6 +167,7 @@ impl State {
             bet_count,
         };
         let undo = UndoInfo {
+            rng_index_before,
             rng_index,
             rng_len: 4,
             income,
@@ -183,6 +185,7 @@ impl State {
 
         debug_assert!(self.money >= BET_UNIT * bet_count_max.get() as u32);
 
+        let rng_index_before = self.rng.index();
         self.rng.set_index(rng_index);
 
         let rs = rand_3(&mut self.rng);
@@ -206,6 +209,7 @@ impl State {
             bet_count,
         };
         let undo = UndoInfo {
+            rng_index_before,
             rng_index,
             rng_len: 3,
             income,
@@ -223,6 +227,7 @@ impl State {
 
         debug_assert!(self.money >= BET_UNIT * bet_count_max.get() as u32);
 
+        let rng_index_before = self.rng.index();
         self.rng.set_index(rng_index);
 
         let rs = rand_3(&mut self.rng);
@@ -246,6 +251,7 @@ impl State {
             bet_count,
         };
         let undo = UndoInfo {
+            rng_index_before,
             rng_index,
             rng_len: 3,
             income,
@@ -258,6 +264,7 @@ impl State {
         debug_assert!(rng_len.get() >= 5);
         debug_assert!(self.money >= COST_POKER);
 
+        let rng_index_before = self.rng.index();
         self.rng.set_index(rng_index);
 
         let income = play_poker(&mut self.rng, rng_len);
@@ -266,6 +273,7 @@ impl State {
 
         let cmv = ConcreteMove::Poker { rng_index, rng_len };
         let undo = UndoInfo {
+            rng_index_before,
             rng_index,
             rng_len: rng_len.get(),
             income,
@@ -278,6 +286,7 @@ impl State {
         self.money = self.money.checked_add_signed(-undo.income).unwrap();
 
         self.rng.undo(undo.rng_index, undo.rng_len);
+        self.rng.set_index(undo.rng_index_before);
     }
 }
 
@@ -417,6 +426,7 @@ impl std::fmt::Display for ConcreteMovesPretty<'_> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct UndoInfo {
+    rng_index_before: u8,
     rng_index: u8,
     rng_len: usize,
     income: i32,
@@ -447,13 +457,19 @@ fn play_poker(rng: &mut Rng, rng_len: NonZeroUsize) -> i32 {
         masks_cur[i] |= 1 << card.rank().inner();
     }
 
+    // 注意: 乱数消費量を一定にするため、ここで全てのカードを引き切らなければならない。
+    let exchange_count = rng_len.get() - 5;
+    let mut cards_new = ArrayVec::<Card, 5>::new();
+    for _ in 0..exchange_count {
+        cards_new.push(deal!());
+    }
+
     // いずれかのスートでロイヤルストレートが成立していたらOK。
     if masks_cur.into_iter().any(|mask| mask == MASK_ROYAL) {
         return INCOME_ROYAL;
     }
 
     // カードを交換しないのなら役なし。
-    let exchange_count = rng_len.get() - 5;
     if exchange_count == 0 {
         return INCOME_OTHERS;
     }
@@ -461,7 +477,7 @@ fn play_poker(rng: &mut Rng, rng_len: NonZeroUsize) -> i32 {
     // カードを交換する場合、新たに引くカードたちのスートは統一されていなければならない。
     // よって、1 枚目を特別扱いすることで後の処理を簡潔にする。
     let (suit, mask_cur, mut mask_new) = {
-        let card = deal!();
+        let card = cards_new[0];
 
         let mask_new = 1 << card.rank().inner();
         if (!MASK_ROYAL & mask_new) != 0 {
@@ -475,9 +491,7 @@ fn play_poker(rng: &mut Rng, rng_len: NonZeroUsize) -> i32 {
         (suit, mask_cur, mask_new)
     };
 
-    for _ in 0..exchange_count - 1 {
-        let card = deal!();
-
+    for &card in &cards_new[1..] {
         if card.suit() != suit {
             return INCOME_OTHERS;
         }
