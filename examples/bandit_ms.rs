@@ -5,12 +5,14 @@ fn main() {
         let mut rng = Rng::with_index(index);
         let rs: [u8; 3] = std::array::from_fn(|_| rng.gen());
 
-        let prizes = bandit_ms_play(rs);
-        let prize_sum: u32 = prizes.into_iter().sum();
+        let prize = bandit_ms_play(rs);
+
+        let factors = prize.factors();
+        let factor_sum: u32 = factors.into_iter().sum();
 
         println!(
-            "0x{index:02X}\t{}\t{}\t{}\t{prize_sum}",
-            prizes[0], prizes[1], prizes[2]
+            "0x{index:02X}\t{}\t{}\t{}\t{factor_sum}",
+            factors[0], factors[1], factors[2]
         );
     }
 }

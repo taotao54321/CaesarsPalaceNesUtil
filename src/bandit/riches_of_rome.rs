@@ -1,15 +1,42 @@
-/// スロットマシン "Riches of Rome" を指定した乱数列でプレイし、各行の賞金倍率を返す。
-///
-/// 戻り値は (中央行, 上行, 下行) の順 (BET 順と同じ)。
-pub fn bandit_ror_play(rs: [u8; 3]) -> [u32; 3] {
+use std::num::NonZeroUsize;
+
+/// スロットマシン "Riches of Rome" のプレイ結果。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BanditRorPrize {
+    factors: [u32; 3],
+}
+
+impl BanditRorPrize {
+    fn new(factors: [u32; 3]) -> Self {
+        Self { factors }
+    }
+
+    /// 各行の賞金倍率を返す。(中央行, 上行, 下行) の順 (BET 順と同じ)。
+    pub fn factors(self) -> [u32; 3] {
+        self.factors
+    }
+
+    pub fn calc(self, bet_unit: u32, bet_count: NonZeroUsize) -> u32 {
+        self.factors
+            .into_iter()
+            .take(bet_count.get())
+            .map(|factor| bet_unit * factor)
+            .sum()
+    }
+}
+
+/// スロットマシン "Riches of Rome" を指定した乱数列でプレイし、結果を返す。
+pub fn bandit_ror_play(rs: [u8; 3]) -> BanditRorPrize {
     let reels = randoms_to_reels(rs);
 
-    std::array::from_fn(|i| {
+    let factors = std::array::from_fn(|i| {
         const BIASS: [u8; 3] = [2, 0, 4];
         let reels = reels.map(|reel| reel.wrapping_add(BIASS[i]));
         let syms = reels_to_symbols(reels);
         prize_factor(syms)
-    })
+    });
+
+    BanditRorPrize::new(factors)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
