@@ -9,11 +9,18 @@ const BET_UNIT_BANDIT_FOF: u32 = 1; // $5 を使っても大ジャックポッ�
 const BET_UNIT_BANDIT_MS: u32 = 100;
 const BET_UNIT_BANDIT_ROR: u32 = 500;
 
+// $100 を 2 回賭けしたロイヤルフラッシュで 50000 稼げるので一応。
+// 多分ロイヤルフラッシュ以外は考慮しなくていいと思う。
+const COST_POKER: u32 = 200;
+
 fn main() {
+    const MONEY_TARGET: u32 = 0x20000;
+    const DEPTH: u32 = 2;
+
     let mut state = State::new();
     let mut cmoves = ConcreteMoves::new();
 
-    solve(&mut state, &mut cmoves, 0x20000, 3);
+    solve(&mut state, &mut cmoves, MONEY_TARGET, DEPTH);
 }
 
 fn solve(state: &mut State, cmoves: &mut ConcreteMoves, money_target: u32, depth_remain: u32) {
@@ -41,7 +48,7 @@ fn solve_leaf(state: &mut State, cmoves: &mut ConcreteMoves, money_target: u32) 
         return;
     }
 
-    let moves = state.gen_leaf_moves();
+    let moves = state.gen_moves();
 
     for mv in moves {
         for rng_index in 0..=0xFF {
@@ -82,6 +89,8 @@ impl State {
     }
 
     /// 現局面における抽象指し手を列挙する。
+    ///
+    /// 末端局面に対してもこれを使う。現状特に区別する必要なさそうなので。
     fn gen_moves(&self) -> Moves {
         let mut moves = Moves::new();
 
@@ -103,32 +112,12 @@ impl State {
                 moves.push(Move::BanditRor { bet_count_max });
             }
         }
-
-        moves
-    }
-
-    /// 現局面を末端局面とみなして抽象指し手を列挙する。
-    ///
-    /// NOTE: 今のところ `gen_moves()` と同じだが、ポーカーを利用した乱数調整なども考えられるので...。
-    fn gen_leaf_moves(&self) -> Moves {
-        let mut moves = Moves::new();
-
         {
-            let bet_count_max = 3.min(self.money / BET_UNIT_BANDIT_FOF) as usize;
-            if let Some(bet_count_max) = NonZeroUsize::new(bet_count_max) {
-                moves.push(Move::BanditFof { bet_count_max });
-            }
-        }
-        {
-            let bet_count_max = 3.min(self.money / BET_UNIT_BANDIT_MS) as usize;
-            if let Some(bet_count_max) = NonZeroUsize::new(bet_count_max) {
-                moves.push(Move::BanditMs { bet_count_max });
-            }
-        }
-        {
-            let bet_count_max = 3.min(self.money / BET_UNIT_BANDIT_ROR) as usize;
-            if let Some(bet_count_max) = NonZeroUsize::new(bet_count_max) {
-                moves.push(Move::BanditRor { bet_count_max });
+            if self.money >= COST_POKER {
+                for rng_len in 5..=10 {
+                    let rng_len = NonZeroUsize::new(rng_len).unwrap();
+                    moves.push(Move::Poker { rng_len });
+                }
             }
         }
 
@@ -141,6 +130,7 @@ impl State {
             Move::BanditFof { bet_count_max } => self.do_move_bandit_fof(bet_count_max, rng_index),
             Move::BanditMs { bet_count_max } => self.do_move_bandit_ms(bet_count_max, rng_index),
             Move::BanditRor { bet_count_max } => self.do_move_bandit_ror(bet_count_max, rng_index),
+            Move::Poker { rng_len } => self.do_move_poker(rng_len, rng_index),
         }
     }
 
@@ -264,6 +254,26 @@ impl State {
         (cmv, undo)
     }
 
+    fn do_move_poker(&mut self, rng_len: NonZeroUsize, rng_index: u8) -> (ConcreteMove, UndoInfo) {
+        debug_assert!(rng_len.get() >= 5);
+        debug_assert!(self.money >= COST_POKER);
+
+        self.rng.set_index(rng_index);
+
+        let income = play_poker(&mut self.rng, rng_len);
+
+        self.money = self.money.checked_add_signed(income).unwrap();
+
+        let cmv = ConcreteMove::Poker { rng_index, rng_len };
+        let undo = UndoInfo {
+            rng_index,
+            rng_len: rng_len.get(),
+            income,
+        };
+
+        (cmv, undo)
+    }
+
     fn undo_move(&mut self, undo: UndoInfo) {
         self.money = self.money.checked_add_signed(-undo.income).unwrap();
 
@@ -273,18 +283,17 @@ impl State {
 
 /// 抽象的な指し手。乱数インデックスや実際の BET 枚数の情報を持たない。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(clippy::enum_variant_names)]
 enum Move {
     BanditFof { bet_count_max: NonZeroUsize },
     BanditMs { bet_count_max: NonZeroUsize },
     BanditRor { bet_count_max: NonZeroUsize },
+    Poker { rng_len: NonZeroUsize },
 }
 
 type Moves = ArrayVec<Move, 16>;
 
 /// 具体的な指し手。乱数インデックスや実際の BET 枚数の情報を持つ。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(clippy::enum_variant_names)]
 enum ConcreteMove {
     BanditFof {
         rng_index: u8,
@@ -297,6 +306,10 @@ enum ConcreteMove {
     BanditRor {
         rng_index: u8,
         bet_count: NonZeroUsize,
+    },
+    Poker {
+        rng_index: u8,
+        rng_len: NonZeroUsize,
     },
 }
 
@@ -332,6 +345,17 @@ impl ConcreteMove {
                     ..
                 },
             ) => rng_index_distance(index_pre, index) == Some(3),
+            (
+                Self::Poker {
+                    rng_index: index, ..
+                },
+                Self::Poker {
+                    rng_index: index_pre,
+                    rng_len: len,
+                },
+            ) => {
+                rng_index_distance(index_pre, index).map_or(false, |d| usize::from(d) == len.get())
+            }
             _ => false,
         }
     }
@@ -343,15 +367,16 @@ impl std::fmt::Display for ConcreteMove {
             Self::BanditFof {
                 rng_index,
                 bet_count,
-            } => write!(f, "Fof(0x{:02X}, {})", rng_index, bet_count),
+            } => write!(f, "Fof(0x{rng_index:02X}, {bet_count})"),
             Self::BanditMs {
                 rng_index,
                 bet_count,
-            } => write!(f, "Ms(0x{:02X}, {})", rng_index, bet_count),
+            } => write!(f, "Ms(0x{rng_index:02X}, {bet_count})"),
             Self::BanditRor {
                 rng_index,
                 bet_count,
-            } => write!(f, "Ror(0x{:02X}, {})", rng_index, bet_count),
+            } => write!(f, "Ror(0x{rng_index:02X}, {bet_count})"),
+            Self::Poker { rng_index, rng_len } => write!(f, "Poker(0x{rng_index:02X}, {rng_len})"),
         }
     }
 }
@@ -395,6 +420,83 @@ struct UndoInfo {
     rng_index: u8,
     rng_len: usize,
     income: i32,
+}
+
+/// ポーカーをプレイし、収入を返す。
+///
+/// ロイヤルフラッシュしか判定していない(手抜き)。
+fn play_poker(rng: &mut Rng, rng_len: NonZeroUsize) -> i32 {
+    const INCOME_ROYAL: i32 = 50000 - COST_POKER as i32;
+    const INCOME_OTHERS: i32 = -(COST_POKER as i32);
+
+    const MASK_ROYAL: u32 = (1 << 9) | (1 << 10) | (1 << 11) | (1 << 12) | (1 << 0);
+
+    let mut deck = Deck::new();
+
+    macro_rules! deal {
+        () => {{
+            deck.deal(rng.gen())
+        }};
+    }
+
+    // 5 枚引き、各スートの mask を得る。
+    let mut masks_cur = [0; 4];
+    for _ in 0..5 {
+        let card = deal!();
+        let i = usize::from(card.suit().inner());
+        masks_cur[i] |= 1 << card.rank().inner();
+    }
+
+    // いずれかのスートでロイヤルストレートが成立していたらOK。
+    if masks_cur.into_iter().any(|mask| mask == MASK_ROYAL) {
+        return INCOME_ROYAL;
+    }
+
+    // カードを交換しないのなら役なし。
+    let exchange_count = rng_len.get() - 5;
+    if exchange_count == 0 {
+        return INCOME_OTHERS;
+    }
+
+    // カードを交換する場合、新たに引くカードたちのスートは統一されていなければならない。
+    // よって、1 枚目を特別扱いすることで後の処理を簡潔にする。
+    let (suit, mask_cur, mut mask_new) = {
+        let card = deal!();
+
+        let mask_new = 1 << card.rank().inner();
+        if (!MASK_ROYAL & mask_new) != 0 {
+            return INCOME_OTHERS;
+        }
+
+        let suit = card.suit();
+        let i = usize::from(suit.inner());
+        let mask_cur = masks_cur[i];
+
+        (suit, mask_cur, mask_new)
+    };
+
+    for _ in 0..exchange_count - 1 {
+        let card = deal!();
+
+        if card.suit() != suit {
+            return INCOME_OTHERS;
+        }
+
+        let bit = 1 << card.rank().inner();
+        if (mask_new & bit) != 0 {
+            return INCOME_OTHERS;
+        }
+        if (!MASK_ROYAL & bit) != 0 {
+            return INCOME_OTHERS;
+        }
+
+        mask_new |= bit;
+        if ((mask_cur | mask_new) & MASK_ROYAL) == MASK_ROYAL {
+            return INCOME_ROYAL;
+        }
+    }
+
+    INCOME_OTHERS
 }
 
 fn rand_3(rng: &mut Rng) -> [u8; 3] {
