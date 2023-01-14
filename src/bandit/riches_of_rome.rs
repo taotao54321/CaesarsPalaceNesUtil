@@ -2,18 +2,18 @@
 ///
 /// 戻り値は (中央行, 上行, 下行) の順 (BET 順と同じ)。
 pub fn bandit_ror_play(rs: [u8; 3]) -> [u32; 3] {
-    let reels = bandit_ror_reels(rs);
+    let reels = randoms_to_reels(rs);
 
     std::array::from_fn(|i| {
         const BIASS: [u8; 3] = [2, 0, 4];
         let reels = reels.map(|reel| reel.wrapping_add(BIASS[i]));
-        let syms = bandit_ror_reels_to_symbols(reels);
-        bandit_ror_prize_factor(syms)
+        let syms = reels_to_symbols(reels);
+        prize_factor(syms)
     })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum BanditRorSymbol {
+enum Symbol {
     Watermelon,
     Lemon,
     Bar,
@@ -24,17 +24,17 @@ enum BanditRorSymbol {
     Bell,
 }
 
-fn bandit_ror_reels(rs: [u8; 3]) -> [u8; 3] {
+fn randoms_to_reels(rs: [u8; 3]) -> [u8; 3] {
     const BASES: [u8; 3] = [40, 10, 24];
 
     // 乱数は逆順に適用される。
     std::array::from_fn(|i| 2 * (BASES[i].wrapping_add(rs[2 - i]) % 20))
 }
 
-fn bandit_ror_reels_to_symbols(reels: [u8; 3]) -> [BanditRorSymbol; 3] {
+fn reels_to_symbols(reels: [u8; 3]) -> [Symbol; 3] {
     #[rustfmt::skip]
-    const TABLE: [[BanditRorSymbol; 20]; 3] = {
-        use BanditRorSymbol::*;
+    const TABLE: [[Symbol; 20]; 3] = {
+        use Symbol::*;
         [
             [
                 Orange, Watermelon, Plum,   Cherry, Plum,       Orange, Seven,  Bell, Orange, Cherry,
@@ -57,8 +57,8 @@ fn bandit_ror_reels_to_symbols(reels: [u8; 3]) -> [BanditRorSymbol; 3] {
     })
 }
 
-fn bandit_ror_prize_factor(syms: [BanditRorSymbol; 3]) -> u32 {
-    use BanditRorSymbol::*;
+fn prize_factor(syms: [Symbol; 3]) -> u32 {
+    use Symbol::*;
 
     match syms {
         [Seven, Seven, Seven] => 200,
