@@ -48,7 +48,7 @@ fn solve_leaf(state: &mut State, cmoves: &mut ConcreteMoves, money_target: u32) 
             let (cmv, undo) = state.do_move(mv, rng_index);
             cmoves.push(cmv);
             if state.money() >= money_target {
-                println!("{}", ConcreteMovesPretty::new(&cmoves));
+                println!("{}", ConcreteMovesPretty::new(cmoves));
             }
             cmoves.pop().unwrap();
             state.undo_move(undo);
@@ -273,6 +273,7 @@ impl State {
 
 /// 抽象的な指し手。乱数インデックスや実際の BET 枚数の情報を持たない。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(clippy::enum_variant_names)]
 enum Move {
     BanditFof { bet_count_max: NonZeroUsize },
     BanditMs { bet_count_max: NonZeroUsize },
@@ -283,6 +284,7 @@ type Moves = ArrayVec<Move, 16>;
 
 /// 具体的な指し手。乱数インデックスや実際の BET 枚数の情報を持つ。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(clippy::enum_variant_names)]
 enum ConcreteMove {
     BanditFof {
         rng_index: u8,
@@ -296,6 +298,43 @@ enum ConcreteMove {
         rng_index: u8,
         bet_count: NonZeroUsize,
     },
+}
+
+impl ConcreteMove {
+    /// `pre`, `self` をホールに戻ることなく連続で実行できるかどうかを返す。
+    fn can_fast_forward_from(self, pre: Self) -> bool {
+        // 種類が同じで、かつ乱数インデックスの差が適切ならばOK。
+        match (self, pre) {
+            (
+                Self::BanditFof {
+                    rng_index: index, ..
+                },
+                Self::BanditFof {
+                    rng_index: index_pre,
+                    ..
+                },
+            ) => rng_index_distance(index_pre, index) == Some(4),
+            (
+                Self::BanditMs {
+                    rng_index: index, ..
+                },
+                Self::BanditMs {
+                    rng_index: index_pre,
+                    ..
+                },
+            ) => rng_index_distance(index_pre, index) == Some(3),
+            (
+                Self::BanditRor {
+                    rng_index: index, ..
+                },
+                Self::BanditRor {
+                    rng_index: index_pre,
+                    ..
+                },
+            ) => rng_index_distance(index_pre, index) == Some(3),
+            _ => false,
+        }
+    }
 }
 
 impl std::fmt::Display for ConcreteMove {
@@ -332,13 +371,17 @@ impl std::fmt::Display for ConcreteMovesPretty<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_char('[')?;
 
-        let mut first = true;
-        for cmv in self.0 {
-            if !first {
+        for i in 0..self.0.len() {
+            if i != 0 {
                 f.write_str(", ")?;
             }
-            first = false;
-            cmv.fmt(f)?;
+
+            // ホールに戻らずに済むケースを検出、表示する。
+            if i > 0 && self.0[i].can_fast_forward_from(self.0[i - 1]) {
+                f.write_char('*')?;
+            }
+
+            self.0[i].fmt(f)?;
         }
 
         f.write_char(']')?;
@@ -364,4 +407,22 @@ fn rand_4(rng: &mut Rng) -> [u8; 4] {
 
 fn bet_counts(bet_count_max: NonZeroUsize) -> impl Iterator<Item = NonZeroUsize> {
     (1..=bet_count_max.get()).map(|x| NonZeroUsize::new(x).unwrap())
+}
+
+fn rng_index_distance(src: u8, dst: u8) -> Option<u8> {
+    // ホールに戻ることなく乱数インデックスを 250 以上にすることはできない。
+    if dst >= 250 {
+        return None;
+    }
+
+    // src が 250 以上の場合、次は 0 となるので例外処理が必要。
+    if src >= 250 {
+        return Some(dst + 1);
+    }
+
+    Some(if src <= dst {
+        dst - src
+    } else {
+        250 - (src - dst)
+    })
 }
